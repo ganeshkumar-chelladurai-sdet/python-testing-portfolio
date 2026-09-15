@@ -1,0 +1,5 @@
+id,email,name,credit_score,updated_at
+1,jane.doe@example.com,Jane Doe,720,2026-01-05
+2,mark.smith@example.com,Mark Smith,680,2026-02-10
+3,alan.turing@example.com,Alan Turing,900,2026-01-20
+4,grace.hopper@example.com,Grace Hopper,750,2026-03-01

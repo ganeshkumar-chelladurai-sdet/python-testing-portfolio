@@ -1,0 +1,6 @@
+flask
+pandas
+pytest
+pytest-playwright
+requests
+jsonschema
