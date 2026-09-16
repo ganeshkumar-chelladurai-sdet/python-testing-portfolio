@@ -1,5 +1,5 @@
 # Python + PyTest Testing Portfolio
-
+![Tests](https://github.com/ganeshkumar-chelladurai-sdet/python-testing-portfolio/actions/workflows/tests.yml/badge.svg)
 A single self-contained project demonstrating UI, API, and ETL/data-pipeline
 testing with **Python and PyTest only** — built to close a specific gap:
 Python/PyTest keeps showing up across QA/SDET job descriptions in Ireland,
