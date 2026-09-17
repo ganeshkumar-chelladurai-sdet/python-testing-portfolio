@@ -1,7 +1,8 @@
 import pytest
 import pandas as pd
 
-from mock_target.etl.pipeline import merge_sources, dedupe_customers, validate_threshold
+from mock_target.etl.pipeline import merge_sources, dedupe_customers, validate_threshold, load_into_db
+from mock_target.app import get_db
 
 @pytest.fixture
 def raw_customer_data():
@@ -44,3 +45,29 @@ def test_validate_threshold_boundaries(credit_score, expected_valid):
         assert len(valid) == 1 and len(invalid) == 0
     else:
         assert len(valid) == 0 and len(invalid) == 1
+
+@pytest.mark.etl
+def test_load_into_db_inserts_and_updates():
+    valid = pd.DataFrame([
+        {"name": "Jane Doe", "email": "jane.doe@example.com", "credit_score": 750, "updated_at": "2026-04-01"},
+        {"name": "New Person", "email": "new.person@example.com", "credit_score": 700, "updated_at": "2026-04-01"},
+    ])
+    invald = pd.DataFrame([
+        {"name": "Bad Score Person", "email": "bad.score@example.com", "credit_score": 999, "updated_at": "2026-04-01"},
+    ])
+
+    result = load_into_db(valid, invald)
+    assert result == {"inserted": 2, "updated": 1}
+
+    conn = get_db()
+    jane = conn.execute("SELECT * FROM customers WHERE email = ?", ("jane.doe@example.com",)).fetchone()
+    assert jane["id"] == 1
+    assert jane["credit_score"] == 750
+    assert jane["flagged"] == 0
+
+    new_person = conn.execute("SELECT * FROM customers WHERE email = ?", ("new.person@example.com",)).fetchone()
+    assert new_person["flagged"] == 0
+
+    bad = conn.execute("SELECT * FROM customers WHERE email = ?", ("bad.score@example.com",)).fetchone()
+    assert bad["flagged"] == 1
+    conn.close()

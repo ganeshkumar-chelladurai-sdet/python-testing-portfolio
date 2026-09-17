@@ -7,6 +7,9 @@ Serves two things:
 
 Run with: python app.py  (serves on http://localhost:5000)
 """
+import os
+import sqlite3
+
 from flask import Flask, render_template, request, redirect, url_for, jsonify
 
 app = Flask(__name__)
@@ -32,55 +35,156 @@ def dashboard():
     return "<h1>Welcome</h1><p id='dashboard-msg'>Login successful.</p>"
 
 
-# --- API target: customers CRUD ---
-CUSTOMERS = {
-    1: {"id": 1, "name": "Jane Doe", "email": "jane.doe@example.com"},
-    2: {"id": 2, "name": "Mark Smith", "email": "mark.smith@example.com"},
-}
-_next_id = 3
+# --- API target: customers CRUD, backed by SQLite ---
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "app.db")
+
+SCHEMA = """
+CREATE TABLE customers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL,
+    credit_score INTEGER,
+    updated_at TEXT,
+    flagged INTEGER NOT NULL DEFAULT 0
+)
+"""
+
+SEED_CUSTOMERS = [
+    ("Jane Doe", "jane.doe@example.com"),
+    ("Mark Smith", "mark.smith@example.com"),
+]
+
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db(reset=False):
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    conn = get_db()
+    try:
+        if reset:
+            conn.execute("DROP TABLE IF EXISTS customers")
+            conn.commit()
+
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='customers'"
+        )
+        table_exists = cursor.fetchone() is not None
+
+        if not table_exists:
+            conn.execute(SCHEMA)
+            conn.executemany(
+                "INSERT INTO customers (name, email) VALUES (?, ?)", SEED_CUSTOMERS
+            )
+            conn.commit()
+    finally:
+        conn.close()
+
+
+def row_to_customer(row):
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "email": row["email"],
+        "credit_score": row["credit_score"],
+        "updated_at": row["updated_at"],
+        "flagged": row["flagged"],
+    }
 
 
 @app.route("/api/customers", methods=["GET"])
 def list_customers():
-    return jsonify(list(CUSTOMERS.values()))
+    conn = get_db()
+    try:
+        rows = conn.execute("SELECT * FROM customers").fetchall()
+        return jsonify([row_to_customer(row) for row in rows])
+    finally:
+        conn.close()
 
 
 @app.route("/api/customers/<int:customer_id>", methods=["GET"])
 def get_customer(customer_id):
-    customer = CUSTOMERS.get(customer_id)
-    if not customer:
-        return jsonify({"error": "not found"}), 404
-    return jsonify(customer)
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM customers WHERE id = ?", (customer_id,)
+        ).fetchone()
+        if not row:
+            return jsonify({"error": "not found"}), 404
+        return jsonify(row_to_customer(row))
+    finally:
+        conn.close()
 
 
 @app.route("/api/customers", methods=["POST"])
 def create_customer():
-    global _next_id
     body = request.get_json(force=True, silent=True) or {}
     if "name" not in body or "email" not in body:
         return jsonify({"error": "name and email are required"}), 400
-    customer = {"id": _next_id, "name": body["name"], "email": body["email"]}
-    CUSTOMERS[_next_id] = customer
-    _next_id += 1
-    return jsonify(customer), 201
+
+    conn = get_db()
+    try:
+        cursor = conn.execute(
+            "INSERT INTO customers (name, email) VALUES (?, ?)",
+            (body["name"], body["email"]),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM customers WHERE id = ?", (cursor.lastrowid,)
+        ).fetchone()
+        return jsonify(row_to_customer(row)), 201
+    finally:
+        conn.close()
 
 
 @app.route("/api/customers/<int:customer_id>", methods=["PUT"])
 def update_customer(customer_id):
-    if customer_id not in CUSTOMERS:
-        return jsonify({"error": "not found"}), 404
-    body = request.get_json(force=True, silent=True) or {}
-    CUSTOMERS[customer_id].update({k: v for k, v in body.items() if k in ("name", "email")})
-    return jsonify(CUSTOMERS[customer_id])
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM customers WHERE id = ?", (customer_id,)
+        ).fetchone()
+        if not row:
+            return jsonify({"error": "not found"}), 404
+
+        body = request.get_json(force=True, silent=True) or {}
+        updates = {k: v for k, v in body.items() if k in ("name", "email")}
+        if updates:
+            set_clause = ", ".join(f"{field} = ?" for field in updates)
+            conn.execute(
+                f"UPDATE customers SET {set_clause} WHERE id = ?",
+                (*updates.values(), customer_id),
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM customers WHERE id = ?", (customer_id,)
+            ).fetchone()
+
+        return jsonify(row_to_customer(row))
+    finally:
+        conn.close()
 
 
 @app.route("/api/customers/<int:customer_id>", methods=["DELETE"])
 def delete_customer(customer_id):
-    if customer_id not in CUSTOMERS:
-        return jsonify({"error": "not found"}), 404
-    del CUSTOMERS[customer_id]
-    return "", 204
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT id FROM customers WHERE id = ?", (customer_id,)
+        ).fetchone()
+        if not row:
+            return jsonify({"error": "not found"}), 404
+        conn.execute("DELETE FROM customers WHERE id = ?", (customer_id,))
+        conn.commit()
+        return "", 204
+    finally:
+        conn.close()
 
+
+init_db()
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)

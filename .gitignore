@@ -6,3 +6,4 @@ venv/
 *.egg-info/
 .DS_Store
 mock_target/data/cleaned_customers.csv
+*.db

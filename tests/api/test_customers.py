@@ -76,3 +76,17 @@ def test_update_nonexistent_customer_returns_404(app_base_url):
 def test_delete_nonexistent_customer_returns_404(app_base_url):
     response = requests.delete(f"{app_base_url}/api/customers/9999")
     assert response.status_code == 404
+
+@pytest.mark.api
+def test_update_ignores_unexpected_protected_fields(app_base_url):
+    response = requests.put(
+        f"{app_base_url}/api/customers/1",
+        json={"id": 999, "credit_score": 700, "flagged": 1, "name": "Jane Updated"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["name"] == "Jane Updated"
+    assert body["id"] == 1
+    assert body["credit_score"] != 700
+    assert body["flagged"] != 1
