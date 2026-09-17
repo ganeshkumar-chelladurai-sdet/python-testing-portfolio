@@ -1,7 +1,8 @@
 import pytest
 import pandas as pd
 
-from mock_target.etl.pipeline import merge_sources, dedupe_customers, validate_threshold, load_into_db
+from mock_target.etl.pipeline import merge_sources, dedupe_customers, validate_threshold, load_into_db, validate_referential_integrity, load_data
+from pathlib import Path
 from mock_target.app import get_db
 
 @pytest.fixture
@@ -71,3 +72,14 @@ def test_load_into_db_inserts_and_updates():
     bad = conn.execute("SELECT * FROM customers WHERE email = ?", ("bad.score@example.com",)).fetchone()
     assert bad["flagged"] == 1
     conn.close()
+
+@pytest.mark.etl
+def test_referential_integrity_splits_valid_and_orphaned():
+    data_dir = Path(__file__).resolve().parent.parent.parent / "mock_target" / "data"
+    reports = load_data(data_dir / "incoming_credit_reports.csv")
+
+    valid, orphaned = validate_referential_integrity(reports, [1, 2])
+
+    assert len(valid) == 2
+    assert len(orphaned) == 1
+    assert orphaned.iloc[0]["customer_id"] == 9999

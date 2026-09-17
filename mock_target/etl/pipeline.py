@@ -41,6 +41,16 @@ def validate_threshold(df, column, min_value, max_value):
     return df[mask].reset_index(drop=True), df[~mask].reset_index(drop=True)
 
 
+def validate_referential_integrity(reports_df, customer_ids):
+    """
+    Split reports into (valid, orphaned) based on whether each row's
+    customer_id is present in customer_ids. A report is orphaned if it
+    references a customer_id that doesn't actually exist.
+    """
+    mask = reports_df["customer_id"].isin(customer_ids)
+    return reports_df[mask].reset_index(drop=True), reports_df[~mask].reset_index(drop=True)
+
+
 def load_into_db(valid_df, invalid_df, db_path=None):
     """
     Upsert every row from valid_df and invalid_df into the customers table,

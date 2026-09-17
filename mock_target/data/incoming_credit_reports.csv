@@ -1,0 +1,4 @@
+customer_id,score,report_date,source
+1,730,2026-04-01,ICB
+2,690,2026-04-01,ICB
+9999,610,2026-04-01,ICB

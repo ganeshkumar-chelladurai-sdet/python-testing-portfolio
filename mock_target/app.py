@@ -54,6 +54,17 @@ SEED_CUSTOMERS = [
     ("Mark Smith", "mark.smith@example.com"),
 ]
 
+CREDIT_REPORTS_SCHEMA = """
+CREATE TABLE credit_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER NOT NULL,
+    score INTEGER NOT NULL,
+    report_date TEXT NOT NULL,
+    source TEXT,
+    FOREIGN KEY (customer_id) REFERENCES customers(id)
+)
+"""
+
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
@@ -66,6 +77,7 @@ def init_db(reset=False):
     conn = get_db()
     try:
         if reset:
+            conn.execute("DROP TABLE IF EXISTS credit_reports")
             conn.execute("DROP TABLE IF EXISTS customers")
             conn.commit()
 
@@ -79,6 +91,15 @@ def init_db(reset=False):
             conn.executemany(
                 "INSERT INTO customers (name, email) VALUES (?, ?)", SEED_CUSTOMERS
             )
+            conn.commit()
+
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='credit_reports'"
+        )
+        reports_table_exists = cursor.fetchone() is not None
+
+        if not reports_table_exists:
+            conn.execute(CREDIT_REPORTS_SCHEMA)
             conn.commit()
     finally:
         conn.close()
@@ -178,6 +199,92 @@ def delete_customer(customer_id):
         if not row:
             return jsonify({"error": "not found"}), 404
         conn.execute("DELETE FROM customers WHERE id = ?", (customer_id,))
+        conn.commit()
+        return "", 204
+    finally:
+        conn.close()
+
+
+def row_to_report(row):
+    return {
+        "id": row["id"],
+        "customer_id": row["customer_id"],
+        "score": row["score"],
+        "report_date": row["report_date"],
+        "source": row["source"],
+    }
+
+
+@app.route("/api/customers/<int:customer_id>/credit-reports", methods=["GET"])
+def list_credit_reports(customer_id):
+    conn = get_db()
+    try:
+        customer = conn.execute(
+            "SELECT id FROM customers WHERE id = ?", (customer_id,)
+        ).fetchone()
+        if not customer:
+            return jsonify({"error": "not found"}), 404
+
+        rows = conn.execute(
+            "SELECT * FROM credit_reports WHERE customer_id = ?", (customer_id,)
+        ).fetchall()
+        return jsonify([row_to_report(row) for row in rows])
+    finally:
+        conn.close()
+
+
+@app.route("/api/customers/<int:customer_id>/credit-reports", methods=["POST"])
+def create_credit_report(customer_id):
+    conn = get_db()
+    try:
+        customer = conn.execute(
+            "SELECT id FROM customers WHERE id = ?", (customer_id,)
+        ).fetchone()
+        if not customer:
+            return jsonify({"error": "not found"}), 404
+
+        body = request.get_json(force=True, silent=True) or {}
+        if "score" not in body or "report_date" not in body:
+            return jsonify({"error": "score and report_date are required"}), 400
+
+        cursor = conn.execute(
+            "INSERT INTO credit_reports (customer_id, score, report_date, source) "
+            "VALUES (?, ?, ?, ?)",
+            (customer_id, body["score"], body["report_date"], body.get("source")),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM credit_reports WHERE id = ?", (cursor.lastrowid,)
+        ).fetchone()
+        return jsonify(row_to_report(row)), 201
+    finally:
+        conn.close()
+
+
+@app.route("/api/credit-reports/<int:report_id>", methods=["GET"])
+def get_credit_report(report_id):
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM credit_reports WHERE id = ?", (report_id,)
+        ).fetchone()
+        if not row:
+            return jsonify({"error": "not found"}), 404
+        return jsonify(row_to_report(row))
+    finally:
+        conn.close()
+
+
+@app.route("/api/credit-reports/<int:report_id>", methods=["DELETE"])
+def delete_credit_report(report_id):
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT id FROM credit_reports WHERE id = ?", (report_id,)
+        ).fetchone()
+        if not row:
+            return jsonify({"error": "not found"}), 404
+        conn.execute("DELETE FROM credit_reports WHERE id = ?", (report_id,))
         conn.commit()
         return "", 204
     finally:
