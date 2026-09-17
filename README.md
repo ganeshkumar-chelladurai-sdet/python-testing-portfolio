@@ -45,6 +45,12 @@ Two CI pipelines, deliberately scoped differently:
 
   ![Jenkins pipeline passing](docs/jenkins-success.png)
 
+  Jenkins isn't webhook-triggered like GitHub Actions, since that would require
+  exposing a local instance to the public internet — instead it polls GitHub
+  every 5 minutes for new commits (`H/5 * * * *`) and triggers itself. Slightly
+  slower than an instant webhook, but keeps the "local-only" decision intact
+  without giving up automatic runs.
+
 ## Structure
 
 mock_target/
