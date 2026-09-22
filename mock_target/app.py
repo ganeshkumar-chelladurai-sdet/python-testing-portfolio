@@ -13,9 +13,12 @@ import sqlite3
 from datetime import datetime, timedelta
 from functools import wraps
 
-from flask import Flask, render_template, request, redirect, url_for, jsonify
+from flask import Flask, render_template, request, redirect, url_for, jsonify, session
 
 app = Flask(__name__)
+# Hardcoded for a local test target only; a real deployment would pull this from an
+# environment variable or a secrets manager, never commit it to source.
+app.secret_key = "dev-secret-key-not-for-production"
 
 # --- UI target: login page ---
 USERS = {"testuser": "Password123"}
@@ -28,6 +31,7 @@ def login():
         username = request.form.get("username", "")
         password = request.form.get("password", "")
         if USERS.get(username) == password:
+            session["logged_in"] = True
             return redirect(url_for("dashboard"))
         error = "Invalid username or password"
     return render_template("login.html", error=error)
@@ -35,7 +39,15 @@ def login():
 
 @app.route("/dashboard")
 def dashboard():
-    return "<h1>Welcome</h1><p id='dashboard-msg'>Login successful.</p>"
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
+    conn = get_db()
+    try:
+        rows = conn.execute("SELECT * FROM customers").fetchall()
+        customers = [row_to_customer(row) for row in rows]
+    finally:
+        conn.close()
+    return render_template("dashboard.html", customers=customers)
 
 
 # --- API auth: bearer tokens ---

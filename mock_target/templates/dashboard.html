@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head><title>Dashboard</title></head>
+<body>
+  <h1>Welcome</h1>
+  <p id="dashboard-msg">Login successful.</p>
+  <table id="customer-list">
+    <thead>
+      <tr><th>Name</th><th>Email</th><th>Credit Score</th><th>Flagged</th></tr>
+    </thead>
+    <tbody>
+      {% for customer in customers %}
+      <tr class="customer-row" id="customer-row-{{ customer.id }}">
+        <td class="customer-name">{{ customer.name }}</td>
+        <td class="customer-email">{{ customer.email }}</td>
+        <td class="customer-score">{{ customer.credit_score if customer.credit_score is not none else '-' }}</td>
+        <td class="customer-flagged">{{ 'Yes' if customer.flagged else 'No' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if not customers %}
+  <p id="empty-state">No customers found.</p>
+  {% endif %}
+</body>
+</html>
