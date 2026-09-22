@@ -8,7 +8,10 @@ Serves two things:
 Run with: python app.py  (serves on http://localhost:5000)
 """
 import os
+import secrets
 import sqlite3
+from datetime import datetime, timedelta
+from functools import wraps
 
 from flask import Flask, render_template, request, redirect, url_for, jsonify
 
@@ -33,6 +36,63 @@ def login():
 @app.route("/dashboard")
 def dashboard():
     return "<h1>Welcome</h1><p id='dashboard-msg'>Login successful.</p>"
+
+
+# --- API auth: bearer tokens ---
+TOKENS = {}
+
+
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    body = request.get_json(force=True, silent=True) or {}
+    username = body.get("username")
+    password = body.get("password")
+    if (
+        isinstance(username, str)
+        and isinstance(password, str)
+        and USERS.get(username) == password
+    ):
+        token = secrets.token_hex(16)
+        TOKENS[token] = {
+            "username": username,
+            "expires_at": datetime.utcnow() + timedelta(hours=1),
+        }
+        return jsonify({"token": token}), 200
+    return jsonify({"error": "invalid credentials"}), 401
+
+
+def expire_token(token):
+    TOKENS[token]["expires_at"] = datetime.utcnow() - timedelta(seconds=1)
+
+
+def require_auth(view):
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        header = request.headers.get("Authorization", "")
+        if not header.startswith("Bearer "):
+            return jsonify({"error": "missing token"}), 401
+        token = header[len("Bearer "):].strip()
+        entry = TOKENS.get(token)
+        if entry is None:
+            return jsonify({"error": "invalid token"}), 401
+        if entry["expires_at"] < datetime.utcnow():
+            TOKENS.pop(token, None)
+            return jsonify({"error": "token expired"}), 401
+        return view(*args, **kwargs)
+
+    return wrapper
+
+
+if os.environ.get("ENABLE_TEST_ENDPOINTS") == "1":
+
+    @app.route("/api/test/expire-token", methods=["POST"])
+    def test_expire_token():
+        body = request.get_json(force=True, silent=True) or {}
+        token = body.get("token")
+        if token not in TOKENS:
+            return jsonify({"error": "unknown token"}), 404
+        expire_token(token)
+        return jsonify({"expired": True}), 200
 
 
 # --- API target: customers CRUD, backed by SQLite ---
@@ -117,6 +177,7 @@ def row_to_customer(row):
 
 
 @app.route("/api/customers", methods=["GET"])
+@require_auth
 def list_customers():
     conn = get_db()
     try:
@@ -127,6 +188,7 @@ def list_customers():
 
 
 @app.route("/api/customers/<int:customer_id>", methods=["GET"])
+@require_auth
 def get_customer(customer_id):
     conn = get_db()
     try:
@@ -141,6 +203,7 @@ def get_customer(customer_id):
 
 
 @app.route("/api/customers", methods=["POST"])
+@require_auth
 def create_customer():
     body = request.get_json(force=True, silent=True) or {}
     if "name" not in body or "email" not in body:
@@ -162,6 +225,7 @@ def create_customer():
 
 
 @app.route("/api/customers/<int:customer_id>", methods=["PUT"])
+@require_auth
 def update_customer(customer_id):
     conn = get_db()
     try:
@@ -190,6 +254,7 @@ def update_customer(customer_id):
 
 
 @app.route("/api/customers/<int:customer_id>", methods=["DELETE"])
+@require_auth
 def delete_customer(customer_id):
     conn = get_db()
     try:
@@ -216,6 +281,7 @@ def row_to_report(row):
 
 
 @app.route("/api/customers/<int:customer_id>/credit-reports", methods=["GET"])
+@require_auth
 def list_credit_reports(customer_id):
     conn = get_db()
     try:
@@ -234,6 +300,7 @@ def list_credit_reports(customer_id):
 
 
 @app.route("/api/customers/<int:customer_id>/credit-reports", methods=["POST"])
+@require_auth
 def create_credit_report(customer_id):
     conn = get_db()
     try:
@@ -262,6 +329,7 @@ def create_credit_report(customer_id):
 
 
 @app.route("/api/credit-reports/<int:report_id>", methods=["GET"])
+@require_auth
 def get_credit_report(report_id):
     conn = get_db()
     try:
@@ -276,6 +344,7 @@ def get_credit_report(report_id):
 
 
 @app.route("/api/credit-reports/<int:report_id>", methods=["DELETE"])
+@require_auth
 def delete_credit_report(report_id):
     conn = get_db()
     try:

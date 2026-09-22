@@ -1,3 +1,4 @@
+import requests
 import pytest
 
 from mock_target.app import init_db
@@ -11,3 +12,10 @@ def app_base_url():
 @pytest.fixture(autouse=True)
 def reset_db():
     init_db(reset=True)
+
+@pytest.fixture(scope="session")
+def auth_headers():
+    response = requests.post(f"{APP_URL}/api/login", json={"username": "testuser", "password": "Password123"})
+    assert response.status_code == 200
+    token = response.json()["token"]
+    return {"Authorization": f"Bearer {token}"}
