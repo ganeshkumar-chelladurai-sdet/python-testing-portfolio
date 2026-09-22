@@ -20,7 +20,7 @@ pipeline {
             steps {
                 sh '''
                     . venv/bin/activate
-                    python3 mock_target/app.py &
+                    ENABLE_TEST_ENDPOINTS=1 python3 mock_target/app.py &
                     sleep 2
                     pytest -m "api or etl" -v
                 '''
