@@ -7,6 +7,7 @@ Serves two things:
 
 Run with: python app.py  (serves on http://localhost:5000)
 """
+import json
 import os
 import secrets
 import sqlite3
@@ -137,6 +138,18 @@ CREATE TABLE credit_reports (
 )
 """
 
+AUDIT_LOG_SCHEMA = """
+CREATE TABLE audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_type TEXT NOT NULL,
+    entity_id INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    old_values TEXT,
+    new_values TEXT,
+    changed_at TEXT NOT NULL
+)
+"""
+
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
@@ -149,6 +162,7 @@ def init_db(reset=False):
     conn = get_db()
     try:
         if reset:
+            conn.execute("DROP TABLE IF EXISTS audit_log")
             conn.execute("DROP TABLE IF EXISTS credit_reports")
             conn.execute("DROP TABLE IF EXISTS customers")
             conn.commit()
@@ -173,6 +187,15 @@ def init_db(reset=False):
         if not reports_table_exists:
             conn.execute(CREDIT_REPORTS_SCHEMA)
             conn.commit()
+
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='audit_log'"
+        )
+        audit_table_exists = cursor.fetchone() is not None
+
+        if not audit_table_exists:
+            conn.execute(AUDIT_LOG_SCHEMA)
+            conn.commit()
     finally:
         conn.close()
 
@@ -186,6 +209,21 @@ def row_to_customer(row):
         "updated_at": row["updated_at"],
         "flagged": row["flagged"],
     }
+
+
+def write_audit_log(conn, entity_type, entity_id, action, old_values, new_values):
+    conn.execute(
+        "INSERT INTO audit_log (entity_type, entity_id, action, old_values, new_values, changed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            entity_type,
+            entity_id,
+            action,
+            json.dumps(old_values) if old_values is not None else None,
+            json.dumps(new_values) if new_values is not None else None,
+            datetime.utcnow().isoformat(),
+        ),
+    )
 
 
 @app.route("/api/customers", methods=["GET"])
@@ -227,10 +265,13 @@ def create_customer():
             "INSERT INTO customers (name, email) VALUES (?, ?)",
             (body["name"], body["email"]),
         )
-        conn.commit()
         row = conn.execute(
             "SELECT * FROM customers WHERE id = ?", (cursor.lastrowid,)
         ).fetchone()
+        write_audit_log(
+            conn, "customer", cursor.lastrowid, "create", None, row_to_customer(row)
+        )
+        conn.commit()
         return jsonify(row_to_customer(row)), 201
     finally:
         conn.close()
@@ -250,11 +291,13 @@ def update_customer(customer_id):
         body = request.get_json(force=True, silent=True) or {}
         updates = {k: v for k, v in body.items() if k in ("name", "email")}
         if updates:
+            old_values = {field: row[field] for field in updates}
             set_clause = ", ".join(f"{field} = ?" for field in updates)
             conn.execute(
                 f"UPDATE customers SET {set_clause} WHERE id = ?",
                 (*updates.values(), customer_id),
             )
+            write_audit_log(conn, "customer", customer_id, "update", old_values, updates)
             conn.commit()
             row = conn.execute(
                 "SELECT * FROM customers WHERE id = ?", (customer_id,)
@@ -271,10 +314,11 @@ def delete_customer(customer_id):
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT id FROM customers WHERE id = ?", (customer_id,)
+            "SELECT * FROM customers WHERE id = ?", (customer_id,)
         ).fetchone()
         if not row:
             return jsonify({"error": "not found"}), 404
+        write_audit_log(conn, "customer", customer_id, "delete", row_to_customer(row), None)
         conn.execute("DELETE FROM customers WHERE id = ?", (customer_id,))
         conn.commit()
         return "", 204
@@ -331,10 +375,13 @@ def create_credit_report(customer_id):
             "VALUES (?, ?, ?, ?)",
             (customer_id, body["score"], body["report_date"], body.get("source")),
         )
-        conn.commit()
         row = conn.execute(
             "SELECT * FROM credit_reports WHERE id = ?", (cursor.lastrowid,)
         ).fetchone()
+        write_audit_log(
+            conn, "credit_report", cursor.lastrowid, "create", None, row_to_report(row)
+        )
+        conn.commit()
         return jsonify(row_to_report(row)), 201
     finally:
         conn.close()
@@ -361,13 +408,42 @@ def delete_credit_report(report_id):
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT id FROM credit_reports WHERE id = ?", (report_id,)
+            "SELECT * FROM credit_reports WHERE id = ?", (report_id,)
         ).fetchone()
         if not row:
             return jsonify({"error": "not found"}), 404
+        write_audit_log(
+            conn, "credit_report", report_id, "delete", row_to_report(row), None
+        )
         conn.execute("DELETE FROM credit_reports WHERE id = ?", (report_id,))
         conn.commit()
         return "", 204
+    finally:
+        conn.close()
+
+
+def row_to_audit_entry(row):
+    return {
+        "id": row["id"],
+        "entity_type": row["entity_type"],
+        "entity_id": row["entity_id"],
+        "action": row["action"],
+        "old_values": json.loads(row["old_values"]) if row["old_values"] is not None else None,
+        "new_values": json.loads(row["new_values"]) if row["new_values"] is not None else None,
+        "changed_at": row["changed_at"],
+    }
+
+
+@app.route("/api/audit-log/<entity_type>/<int:entity_id>", methods=["GET"])
+@require_auth
+def get_audit_log(entity_type, entity_id):
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM audit_log WHERE entity_type = ? AND entity_id = ? ORDER BY id ASC",
+            (entity_type, entity_id),
+        ).fetchall()
+        return jsonify([row_to_audit_entry(row) for row in rows])
     finally:
         conn.close()
 
