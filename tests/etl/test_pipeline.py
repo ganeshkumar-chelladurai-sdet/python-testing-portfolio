@@ -1,7 +1,7 @@
 import pytest
 import pandas as pd
 
-from mock_target.etl.pipeline import merge_sources, dedupe_customers, validate_threshold, load_into_db, validate_referential_integrity, load_data
+from mock_target.etl.pipeline import merge_sources, dedupe_customers, validate_threshold, load_into_db, validate_referential_integrity, load_data, flag_high_risk_customers
 from pathlib import Path
 from mock_target.app import get_db
 
@@ -83,3 +83,22 @@ def test_referential_integrity_splits_valid_and_orphaned():
     assert len(valid) == 2
     assert len(orphaned) == 1
     assert orphaned.iloc[0]["customer_id"] == 9999
+
+@pytest.mark.etl
+@pytest.mark.parametrize("credit_score, reports, expected_hish_risk", [
+    (550, [(500, "2026-08-01"), (520, "2026-09-01")], True),
+    (550, [(500, "2026-09-01")], False),
+    (700, [(500, "2026-08-01"), (520, "2026-09-01")], False),
+    (550, [(500, "2026-01-01"), (520, "2026-01-15")], False),
+    (None, [], False),
+])
+
+def test_flag_high_risk_customers(credit_score, reports, expected_hish_risk):
+    customers = pd.DataFrame([{"id": 1, "credit_score": credit_score}])
+    reports_df = pd.DataFrame(
+        [{"customer_id": 1, "score": score, "report_date": date} for score, date in reports],
+        columns=["customer_id", "score", "report_date"],
+    )
+
+    result = flag_high_risk_customers(customers, reports_df, as_of_date="2026-09-22")
+    assert result.iloc[0]["high_risk"] == expected_hish_risk

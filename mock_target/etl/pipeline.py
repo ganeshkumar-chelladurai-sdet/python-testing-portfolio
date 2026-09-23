@@ -51,6 +51,40 @@ def validate_referential_integrity(reports_df, customer_ids):
     return reports_df[mask].reset_index(drop=True), reports_df[~mask].reset_index(drop=True)
 
 
+def flag_high_risk_customers(customers_df, credit_reports_df, as_of_date, score_threshold=580, min_flagged_reports=2, window_days=180):
+    """
+    A customer is high-risk if BOTH:
+      - their current credit_score (in customers_df) is below score_threshold, AND
+      - they have at least min_flagged_reports rows in credit_reports_df with
+        score below score_threshold and report_date within window_days before as_of_date.
+
+    Returns a new DataFrame: customers_df with an added boolean 'high_risk' column.
+    Does not mutate the input DataFrames.
+    """
+    as_of = pd.to_datetime(as_of_date)
+    window_start = as_of - pd.Timedelta(days=window_days)
+
+    reports = credit_reports_df.copy()
+    reports["report_date"] = pd.to_datetime(reports["report_date"])
+    recent_low_reports = reports[
+        (reports["score"] < score_threshold)
+        & (reports["report_date"] >= window_start)
+        & (reports["report_date"] <= as_of)
+    ]
+    flagged_counts = recent_low_reports.groupby("customer_id").size()
+
+    result = customers_df.copy()
+    result["high_risk"] = result.apply(
+        lambda row: bool(
+            pd.notna(row["credit_score"])
+            and row["credit_score"] < score_threshold
+            and flagged_counts.get(row["id"], 0) >= min_flagged_reports
+        ),
+        axis=1,
+    )
+    return result
+
+
 def load_into_db(valid_df, invalid_df, db_path=None):
     """
     Upsert every row from valid_df and invalid_df into the customers table,
